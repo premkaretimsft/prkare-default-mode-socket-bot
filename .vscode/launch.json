@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Default-mode socket bot (local)",
+      "type": "node",
+      "request": "attach",
+      "port": 9239,
+      "restart": true,
+      "preLaunchTask": "Start socket bot locally",
+      "presentation": {
+        "group": "all",
+        "order": 1
+      },
+      "internalConsoleOptions": "neverOpen"
+    }
+  ]
+}

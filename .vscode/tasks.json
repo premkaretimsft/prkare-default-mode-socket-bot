@@ -1,0 +1,72 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start socket bot locally",
+      "dependsOn": [
+        "Validate prerequisites",
+        "npm install (socket bot)",
+        "Provision",
+        "Deploy",
+        "Start application"
+      ],
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "Validate prerequisites",
+      "type": "teamsfx",
+      "command": "debug-check-prerequisites",
+      "args": {
+        "prerequisites": [
+          "nodejs",
+          "m365Account"
+        ]
+      }
+    },
+    {
+      "label": "npm install (socket bot)",
+      "type": "shell",
+      "command": "npm install --no-audit"
+    },
+    {
+      "label": "Provision",
+      "type": "teamsfx",
+      "command": "provision",
+      "args": {
+        "env": "local"
+      }
+    },
+    {
+      "label": "Deploy",
+      "type": "teamsfx",
+      "command": "deploy",
+      "args": {
+        "env": "local"
+      }
+    },
+    {
+      "label": "Start application",
+      "type": "shell",
+      "command": "npm run dev:teamsfx",
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": {
+        "pattern": [
+          {
+            "regexp": "^.*$",
+            "file": 0,
+            "location": 1,
+            "message": 2
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "prkare-default-mode-socket-bot starting|\\[nodemon\\] starting",
+          "endsPattern": "connected to Azure SignalR|\\[nodemon\\] app crashed"
+        }
+      }
+    }
+  ]
+}

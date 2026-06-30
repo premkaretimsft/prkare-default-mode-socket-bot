@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://aka.ms/teams-toolkit/1.0.0/yaml.schema.json
+# Teams Toolkit project config for the Default-mode socket test bot.
+# This bot is socket-ONLY: it connects out to Azure SignalR and exposes no endpoint, so there is no
+# Teams app, no manifest, no Bot Framework messaging endpoint and no tunnel. Provisioning only creates
+# a Microsoft Entra app whose client id is the socket "botKey".
+version: 1.0.0
+
+environmentFolderPath: ./env
+
+# Triggered by 'teamsapp provision'. Idempotent: aadApp/create reuses the app when BOT_ID is already
+# populated in the env file, and creates a new one when it is empty.
+provision:
+  - uses: aadApp/create
+    with:
+      name: prkare-default-mode-socket-bot-${{TEAMSFX_ENV}}
+      generateClientSecret: true
+      generateServicePrincipal: false
+      signInAudience: AzureADMyOrg
+    writeToEnvironmentFile:
+      clientId: BOT_ID
+      clientSecret: SECRET_BOT_PASSWORD
+      objectId: AAD_APP_OBJECT_ID
+      tenantId: AAD_APP_TENANT_ID
+
+# Triggered by 'teamsapp deploy'. Writes the runtime env the bot process reads.
+deploy:
+  - uses: file/createOrUpdateEnvironmentFile
+    with:
+      target: ./.localConfigs
+      envs:
+        BOT_ID: ${{BOT_ID}}
+        BOT_PASSWORD: ${{SECRET_BOT_PASSWORD}}
+        BOT_TENANT_ID: ${{AAD_APP_TENANT_ID}}
+        APX_BASE_URL: ${{APX_BASE_URL}}
+        DEFAULT_DIRECTIVE: ${{DEFAULT_DIRECTIVE}}
+        NODE_TLS_REJECT_UNAUTHORIZED: ${{NODE_TLS_REJECT_UNAUTHORIZED}}
+
+projectId: 7d4f1e08-3a26-4b91-bc52-9e10f3a7c4d2

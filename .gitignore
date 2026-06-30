@@ -1,0 +1,21 @@
+# Dependencies / build output
+node_modules/
+lib/
+dist/
+*.log
+*.tsbuildinfo
+
+# Secrets & local env -- NEVER commit (templates .env.example / env/.env.local.sample ARE tracked)
+.env
+.env.local
+.env.*.local
+.localConfigs
+env/.env.local
+env/.env.*.user
+
+# Local Redis lockfile / pid (if ever placed in-repo)
+*.pid
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

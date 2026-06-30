@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://aka.ms/teams-toolkit/v1.11/yaml.schema.json
+# Local-debug lifecycle (used for 'teamsapp provision/deploy --env local').
+# Socket-ONLY bot: only a Microsoft Entra app is created (its client id is the socket "botKey"). No
+# Teams app, no manifest, no Bot Framework endpoint, no dev tunnel.
+version: v1.11
+
+# Idempotent: creates a NEW Entra app when BOT_ID is empty in env/.env.local, reuses the existing one
+# when BOT_ID is already set.
+provision:
+  - uses: aadApp/create
+    with:
+      name: prkare-default-mode-socket-bot-${{TEAMSFX_ENV}}
+      generateClientSecret: true
+      generateServicePrincipal: false
+      signInAudience: AzureADMyOrg
+    writeToEnvironmentFile:
+      clientId: BOT_ID
+      clientSecret: SECRET_BOT_PASSWORD
+      objectId: AAD_APP_OBJECT_ID
+      tenantId: AAD_APP_TENANT_ID
+
+# Generate the runtime env the bot process reads (gitignored .localConfigs).
+deploy:
+  - uses: file/createOrUpdateEnvironmentFile
+    with:
+      target: ./.localConfigs
+      envs:
+        BOT_ID: ${{BOT_ID}}
+        BOT_PASSWORD: ${{SECRET_BOT_PASSWORD}}
+        BOT_TENANT_ID: ${{AAD_APP_TENANT_ID}}
+        APX_BASE_URL: ${{APX_BASE_URL}}
+        DEFAULT_DIRECTIVE: ${{DEFAULT_DIRECTIVE}}
+        NODE_TLS_REJECT_UNAUTHORIZED: ${{NODE_TLS_REJECT_UNAUTHORIZED}}

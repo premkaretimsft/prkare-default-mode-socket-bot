@@ -1,0 +1,25 @@
+{
+  "name": "prkare-default-mode-socket-bot",
+  "version": "1.0.0",
+  "description": "Teams bot socket-mode test client for local APX in Azure SignalR DEFAULT mode (app-hosted hub + client results). Connects out to Azure SignalR, receives invoke envelopes on the 'Activity' client method, and RETURNS the reply via client results. Directive-driven so one bot drives every scenario.",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "main": "./lib/index.js",
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node -r dotenv/config ./lib/index.js",
+    "dev": "nodemon --watch src --ext ts --exec \"node --inspect=9239 -r dotenv/config -r ts-node/register ./src/index.ts\"",
+    "dev:teamsfx": "env-cmd --silent -f .localConfigs npm run dev"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.7",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "env-cmd": "^10.1.0",
+    "nodemon": "^3.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

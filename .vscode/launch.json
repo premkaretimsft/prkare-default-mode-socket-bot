@@ -2,17 +2,72 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Default-mode socket bot (local)",
+      "name": "Launch App in Teams (Edge)",
+      "type": "msedge",
+      "request": "launch",
+      "url": "https://teams.microsoft.com/l/app/${{local:TEAMS_APP_ID}}?installAppPackage=true&webjoin=true&${account-hint}",
+      "cascadeTerminateToConfigurations": [
+        "Attach to socket bot"
+      ],
+      "presentation": {
+        "group": "all",
+        "hidden": true
+      },
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Launch App in Teams (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "https://teams.microsoft.com/l/app/${{local:TEAMS_APP_ID}}?installAppPackage=true&webjoin=true&${account-hint}",
+      "cascadeTerminateToConfigurations": [
+        "Attach to socket bot"
+      ],
+      "presentation": {
+        "group": "all",
+        "hidden": true
+      },
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Attach to socket bot",
       "type": "node",
       "request": "attach",
       "port": 9239,
       "restart": true,
-      "preLaunchTask": "Start socket bot locally",
       "presentation": {
         "group": "all",
-        "order": 1
+        "hidden": true
       },
       "internalConsoleOptions": "neverOpen"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug in Teams (Edge)",
+      "configurations": [
+        "Launch App in Teams (Edge)",
+        "Attach to socket bot"
+      ],
+      "preLaunchTask": "Start socket bot locally",
+      "presentation": {
+        "group": "group 1: Teams",
+        "order": 1
+      },
+      "stopAll": true
+    },
+    {
+      "name": "Debug in Teams (Chrome)",
+      "configurations": [
+        "Launch App in Teams (Chrome)",
+        "Attach to socket bot"
+      ],
+      "preLaunchTask": "Start socket bot locally",
+      "presentation": {
+        "group": "group 1: Teams",
+        "order": 2
+      },
+      "stopAll": true
     }
   ]
 }

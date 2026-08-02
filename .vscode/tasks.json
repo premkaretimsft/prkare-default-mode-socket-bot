@@ -4,6 +4,7 @@
     {
       "label": "Start socket bot locally",
       "dependsOn": [
+        "Free debug port",
         "Validate prerequisites",
         "npm install (socket bot)",
         "Provision",
@@ -11,6 +12,19 @@
         "Start application"
       ],
       "dependsOrder": "sequence"
+    },
+    {
+      "label": "Free debug port",
+      "type": "shell",
+      "command": "node scripts/free-port.js 9239",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
     },
     {
       "label": "Validate prerequisites",
@@ -63,8 +77,8 @@
         ],
         "background": {
           "activeOnStart": true,
-          "beginsPattern": "prkare-default-mode-socket-bot starting|\\[nodemon\\] starting",
-          "endsPattern": "connected to Azure SignalR|\\[nodemon\\] app crashed"
+          "beginsPattern": "\\[nodemon\\] starting",
+          "endsPattern": "prkare-default-mode-socket-bot starting|connected to Azure SignalR|\\[nodemon\\] app crashed"
         }
       }
     }

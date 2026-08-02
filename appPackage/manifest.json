@@ -1,0 +1,43 @@
+{
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.16",
+    "version": "1.0.0",
+    "id": "${{TEAMS_APP_ID}}",
+    "packageName": "com.microsoft.teams.prkare.defaultmodesocketbot",
+    "developer": {
+        "name": "prkare",
+        "websiteUrl": "https://example.com",
+        "privacyUrl": "https://example.com/privacy",
+        "termsOfUseUrl": "https://example.com/termsofuse"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "Prkare Socket Test",
+        "full": "Prkare Socket Test (Default-mode socket bot)"
+    },
+    "description": {
+        "short": "APX Default-mode socket test bot (no public endpoint).",
+        "full": "Test bot that receives invokes and activities from APX over an Azure SignalR Default-mode socket and responds over the socket via client results, sending any content replies over the HTTP conversation API. It exposes no public messaging endpoint."
+    },
+    "accentColor": "#3690E9",
+    "bots": [
+        {
+            "botId": "${{BOT_ID}}",
+            "scopes": [
+                "personal"
+            ],
+            "isNotificationOnly": false,
+            "supportsFiles": false
+        }
+    ],
+    "configurableTabs": [],
+    "staticTabs": [],
+    "permissions": [
+        "identity",
+        "messageTeamMembers"
+    ],
+    "validDomains": []
+}

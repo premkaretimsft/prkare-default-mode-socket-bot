@@ -4,6 +4,7 @@ import {
   LogLevel,
 } from "@microsoft/signalr";
 import { negotiate } from "./negotiate";
+import { logEvent, logError } from "./log";
 
 // Builds a SignalR hub connection to the negotiated Azure SignalR URL and wires the inbound
 // "Activity" client method (APX -> bot).
@@ -27,11 +28,20 @@ export async function buildConnection(
 
   // Returning a value (Promise) from this handler is what makes client results work — APX awaits it.
   conn.on("Activity", (envelope: any) => onActivity(envelope));
-  conn.onreconnecting((e) => console.warn(`[${label}] reconnecting: ${e?.message ?? ""}`));
-  conn.onreconnected((id) => console.log(`[${label}] reconnected: ${id ?? ""}`));
-  conn.onclose((e) => console.warn(`[${label}] closed: ${e?.message ?? ""}`));
+  // APX's BotHub.OnConnectedAsync sends this once the connection is registered in the bot's group.
+  conn.on("SocketReady", (frame: any) =>
+    logEvent("SocketReady <<", {
+      conn: label,
+      dir: "APX->bot",
+      botKey: frame?.botKey ?? frame?.BotKey,
+      connectionId: frame?.connectionId ?? frame?.ConnectionId,
+    })
+  );
+  conn.onreconnecting((e) => logError("socket", { conn: label, event: "reconnecting", error: e?.message }));
+  conn.onreconnected((id) => logEvent("socket", { conn: label, event: "reconnected", connectionId: id }));
+  conn.onclose((e) => logError("socket", { conn: label, event: "closed", error: e?.message }));
 
   await conn.start();
-  console.log(`[${label}] connected to Azure SignalR (Default mode). expiresIn=${neg.expiresIn}s`);
+  logEvent("socket", { conn: label, event: "connected", note: "Azure SignalR (Default mode)", expiresIn: neg.expiresIn });
   return { connection: conn, expiresIn: neg.expiresIn };
 }

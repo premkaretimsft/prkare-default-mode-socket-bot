@@ -1,148 +1,139 @@
-# prkare-default-mode-socket-bot
+# Prkare Socket Test — APX Default-mode socket bot
 
-A minimal Teams bot **socket-mode test client** for exercising APX (`async_messaging_botapiservice`)
-in **Azure SignalR DEFAULT mode** — an app-hosted hub plus **client results**. The bot opens an
-outbound SignalR connection (negotiated through APX), receives invoke envelopes on the `Activity`
-client method, and **returns** the reply. There is no public endpoint, no Teams manifest, and no
-tunnel.
+A Teams bot that installs into Teams for a **1:1 chat**, but receives everything from **APX** over an
+**Azure SignalR Default-mode socket** — so it exposes **no public messaging endpoint and no dev
+tunnel**. It accepts invokes and one-way activities over the socket and responds there (SignalR
+**client results**), and sends any outbound content over the existing **HTTP conversation API**, as
+the socket-mode design intends.
 
-## How it works
+Set up like a normal M365 Agents Toolkit bot: **F5 does all the registration** (Teams app + Entra app
++ Bot Framework) and opens Teams in the browser to install the app — minus the tunnel/endpoint steps.
+
+---
+
+## What it does
+
+1. `POST {APX_BASE_URL}/v3/websockets/connect` (Canary: `https://canary.botapi.skype.com/amer`,
+   authenticated with a real **Bot Framework JWT** minted from the bot's client secret) ->
+   `{ url, accessToken, expiresIn }`.
+2. Opens a SignalR WebSocket to the negotiated **Azure SignalR** `url` and joins the bot's group.
+3. Receives APX->bot frames on the **`Activity`** client method (a `SocketActivityEnvelope`):
+   - **invoke** (`type:"invoke"`) -> computes the Bot Framework invoke response and **returns** it as
+     the client result (`protocolVersion` + `envelopeId` + `status` + `body`).
+   - **one-way activity** (`ackRequired:true`) -> returns a minimal **delivery ack** (status 200);
+     for a `message` it also sends a reply via the **HTTP conversation API** (`src/sendActivity.ts`).
+4. Resilient (re-negotiates through APX on token expiry / socket close) and single-instance.
+
+---
+
+## End-to-end demo flow
+
+The bot is wired to make the whole socket round-trip visible in the 1:1 chat:
+
+1. **Send any message** (e.g. `hi`). It arrives as a one-way activity **over the socket**; the bot acks
+   over the socket and replies with an **adaptive card over HTTP** (`invokeDemoCard`, `src/cards.ts`).
+2. **Click a card button.** Each button fires an **invoke back to the bot over the socket**, and the bot
+   responds **over the socket** (client result):
+   - **🔄 Refresh card** (`Action.Execute` verb `refreshCard`) -> `adaptiveCard/action` invoke -> the bot
+     returns an `AdaptiveCardInvokeResponse`; Teams re-renders the card **in place** (with a live click
+     counter + timestamp), so you can see the socket response land.
+   - **💬 Show message** (verb `showMessage`) -> a message-type invoke response (toast).
+   - **⛔ Error response** (verb `errorAction`) -> a simulated-error message over the socket.
+   - **🗔 Open dialog** (`Action.Submit` -> `task/fetch`) -> the bot returns a **task module** over the
+     socket; submitting it fires `task/submit` (also over the socket).
+
+Message replies stay on **HTTP**; invoke responses stay on the **socket** — exactly the socket-mode split.
+
+---
+
+## Logging (correlation)
+
+Every call in/out of the bot logs one greppable line via `src/log.ts`:
 
 ```
-Teams/INT test ──invoke──▶ APX BotNotifications (pod Pn)
-                              │  resolve botKey→connectionId (Redis directory)
-                              │  Clients.Client(connId).InvokeAsync<InvokeReplyFrame>("Activity", env)
-                              ▼
-                    Azure SignalR Service ──"Activity"──▶ this bot (owner pod Po's socket)
-                              ▲                                │  handler returns InvokeReplyFrame
-                              └────────client result──────────┘  (Service routes the completion
-                                                                  back to the invoking pod Pn)
+[<ISO-8601 UTC>] [<tag>] key=value …  MS-CV=<cv>
 ```
 
-The whole point of Default mode: the bot's reply comes back to the **exact invoker pod** natively via
-client results — the Azure SignalR Service correlates the completion by invocation id. So there is
-**no Redis reply backplane, no upstream webhook, and no manual correlation** (contrast the serverless
-test bot, which sent a separate `invokeResponse` frame up through a webhook). Redis is still used by
-APX, but only as the `botKey → connectionId` **directory** the invoker pod reads to pick a target.
+Tags: `negotiate >>/<<` (connect), `recv <<` (inbound envelope), `reply >>` (socket client result),
+`ack >>` (one-way ack), `reply-card >>/<<` + `http-send >>/<<` (outbound HTTP), `SocketReady <<`,
+`socket` (connect/reconnect/close). Both **success and failure** are logged, and each carries the
+**MS-CV** (from the inbound envelope, or the APX response headers on outbound HTTP) plus the timestamp —
+copy them straight into the APX log search.
 
-The bot's handler simply **returns** the reply:
 
-```ts
-connection.on("Activity", (envelope) => handleActivity(envelope)); // returns Promise<InvokeReplyFrame>
-```
 
 ## Prerequisites
 
-- **Node.js ≥ 18** (`fetch` and `@microsoft/signalr` v8 client results).
-- A local **APX** build of the `user/prkare/socket-default-mode` branch, run from
-  `BotNotificationsRole.ConsoleApp.NETCore` (net8 — client results is ASP.NET Core only).
-- An **Azure SignalR** resource in **Default** service mode (the test resource `prkaretestsocket` is
-  already switched to Default; the Upstream webhook is deleted — that was serverless-only).
-- **Local Redis** for APX's connection directory (`.\start-local-redis.ps1`).
-- For the F5 flow: **Teams Toolkit** (VS Code) or `@microsoft/teamsapp-cli`, signed into an M365
-  account that can create an Entra app.
+- **Node 18+**, VS Code + the **Microsoft 365 Agents Toolkit** extension, an M365 account with
+  sideloading enabled.
+- The bot's AppId **socket-eligible in APX Canary** (ECS `DeliverEventViaSocketBotAllowList`) and
+  known to APX (APS) — the APX-side onboarding.
+- APX Canary reachable with the **BotFrontEnd WebSocket connect** deployed
+  (`https://canary.botapi.skype.com/amer/v3/websockets/connect`).
 
-## APX-side setup (one time)
+---
 
-APX reads its socket config from environment variables, so no secret is committed. Set these for the
-APX process (the SignalR connection string is a **secret** — never commit it):
+## Run it (F5)
 
-```powershell
-# Azure SignalR (Default mode) connection string — from the resource's Keys blade.
-$env:APX_LOCAL_SIGNALR_CONNECTIONSTRING = "Endpoint=https://prkaretestsocket.service.signalr.net;AccessKey=<KEY>;Version=1.0;"
+1. Open the folder in VS Code.
+2. Press **F5** and pick **Debug in Teams (Edge)** or **(Chrome)**. The `Start socket bot locally`
+   task chain runs:
+   - **Validate prerequisites** (Node, M365 sign-in, port 9239),
+   - **npm install**,
+   - **Provision** (`teamsapp provision --env local`) — creates the Teams app, the Entra app
+     (client id = bot id / socket botKey, + client secret), and the Bot Framework registration
+     (**placeholder** messaging endpoint — never called in socket mode),
+   - **Deploy** — writes runtime env to `.localConfigs`,
+   - **Start application** (`npm run dev:teamsfx`) — negotiates with APX and opens the socket.
+3. The browser opens Teams and installs the app; start a **1:1 chat** with **Prkare Socket Test**.
 
-# Local Redis for the botKey -> connectionId directory.
-$env:APX_LOCAL_REDIS_CONNECTIONSTRING = "localhost:6379"
+There is **no dev tunnel and no messaging endpoint** — the bot is reachable only via its outbound
+socket to Azure SignalR.
 
-# Force the socket path on locally without ECS flags (skips the SocketModeHubEnabled gate).
-$env:APX_LOCAL_SIGNALR_ENABLED = "true"
+### Manual run (no Teams UI)
 
-# Optional: scope the socket path to just this bot during a focused run.
-# $env:APX_LOCAL_SIGNALR_BOT_ALLOWLIST = "<this bot's MSA AppId>"
-```
-
-Then start Redis and run APX:
-
-```powershell
-.\start-local-redis.ps1
-# run BotNotificationsRole.ConsoleApp.NETCore (net8) from Visual Studio / dotnet-free MSBuild output
-```
-
-## Run the bot
-
-### Option A — F5 (Teams Toolkit, self-provisioning)
-
-1. Open this folder in VS Code with Teams Toolkit installed.
-2. Copy `env/.env.local.sample` → `env/.env.local` (leave `BOT_ID` empty to mint a new registration).
-3. Press **F5** (or run the *Run Default-mode socket bot (local)* launch config). The toolkit:
-   - validates prerequisites, runs `npm install`,
-   - **provisions** a Microsoft Entra app (its client id becomes the socket `botKey`),
-   - **deploys** the runtime env to `.localConfigs` (gitignored),
-   - starts the bot (`npm run dev:teamsfx`).
-4. Watch for `connected to Azure SignalR (Default mode)`.
-
-### Option B — manual (`npm run dev`)
-
-```powershell
+```bash
 npm install
-copy .env.example .env
-# set BOT_KEY to any GUID (the DEBUG local APX negotiate accepts ?botKey=<this> unauthenticated)
-npm run dev
+# set BOT_ID / BOT_PASSWORD / BOT_TENANT_ID / APX_BASE_URL in .localConfigs (or provision once), then:
+npm run build && npm run dev:teamsfx
 ```
 
-> The bot connects to the **Azure SignalR Service URL** returned by negotiate, not to APX directly.
-> APX only mints the client token (and validates the bot in a non-DEBUG build).
+Expected: `prkare-default-mode-socket-bot starting. apx=https://canary.botapi.skype.com/amer botKey=<appId> ...`
+then `[conn1] connected to Azure SignalR (Default mode).` and `SocketReady from APX`.
 
-## Driving scenarios — directives
+---
 
-Each invoke's behavior is driven by `payload.value.directive` (or `DEFAULT_DIRECTIVE` when absent), so
-one bot exercises every path:
+## Configuration
 
-| directive | bot behavior | APX outcome |
-|-----------|--------------|-------------|
-| `ok` (default) | return `200` + the real invoke-response body for the invoke name | socket reply served; HTTP skipped |
-| `error` | return `500` + error body | socket reply served (bot-reported failure) |
-| `delay` | sleep `value.delayMs` (default `27000`) then return `200` | exceeds the 25s deadline → APX **timeout → HTTP fallback** |
-| `drop` | never return (invocation stays pending) | APX hits its deadline → **timeout → HTTP fallback** |
+`env/.env.local` (F5) / `.localConfigs` (generated by deploy):
 
-The `ok` reply body is the same Bot Framework invoke-response shape an HTTP bot returns (see
-`src/invokeResponses.ts`), so APX's `InvokeHelper.ProcessInvokeResponse` handles both transports
-identically.
+| var | meaning |
+|---|---|
+| `APX_BASE_URL` | APX connect host + region. Canary: `https://canary.botapi.skype.com/amer`. Local DEBUG APX: `https://localhost:444`. |
+| `BOT_ID` | the bot's MSA AppId = socket botKey. On Canary the key is derived from the validated token. |
+| `BOT_PASSWORD` | the bot's client secret (provisioned as `SECRET_BOT_PASSWORD`). Required for the authenticated Canary connect. |
+| `BOT_TENANT_ID` | the bot's home tenant (single-tenant Entra app) = the Bot Framework token issuer APX validates. Also the tenant put in the connect path when `TENANT_IN_PATH=true`. |
+| `TENANT_IN_PATH` | `true` (default) = connect via the tenantized route `{cloud}/{tenantId}/v3/websockets/connect` so APX's `TenantIdInPathFilter` sets `ctx.TenantId` before the socket-eligibility check (a bot token carries no tenant, and a connect has no conversation). Needed for tenant-scoped `DeliverEventViaSocketEnabled` to match. `false` = plain route (use if the ring lacks `TenantIdInPathRoutesEnabled`, or for local DEBUG). |
+| `TEAMS_APP_ID` | the Teams app id (provisioned); used by the F5 launch URL. |
+| `DEFAULT_DIRECTIVE` | behavior when an invoke/activity carries no `value.directive` (ok/error/delay/drop). |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | `1` = validate TLS (Canary); `0` = accept a self-signed local APX dev cert. Must be non-empty for the toolkit. |
 
-## Triggering an invoke
+Secrets (`SECRET_BOT_PASSWORD`) live in `env/.env.local.user` (gitignored, encrypted by the toolkit).
 
-- **INT tests** (`async_messaging_botapi-tests`, branch `user/prkare/socket-default-mode-tests`) send
-  an invoke for this bot's MSA AppId; or
-- a **real Teams client** interacting with a messaging-extension/adaptive-card bot whose AppId matches
-  this bot's `botKey`.
+---
 
-Watch the bot console for `[recv] <-- APX` and `[reply] --> APX (client result)`, and the APX log for
-`Socket invoke SERVED botKey=… status=… -> bypassing HTTP.`
+## Wire contract (kept in sync with APX `Library/Services`)
 
-## The no-reroute proof (E1)
+- Client method **`Activity`**; replies via **client results** (return value), not a separate send.
+- Every reply frame carries **`protocolVersion: 1`** (`SocketProtocol.CurrentVersion`) — APX rejects a
+  mismatch as `ProtocolMismatch`.
+- One-way activities (`ackRequired`) get a status-200 ack; invokes get `{ status, body }`.
+- Outbound content sends stay on **HTTP** (`/v3/conversations/{id}/activities`), never the socket.
 
-A single local pod can't prove the cross-pod reply path (the invoker pod **is** the owner pod). To
-prove it: run **two** `BotNotificationsRole.ConsoleApp.NETCore` pods against the same Default-mode
-resource **and the same local Redis directory**; this bot connects (owned by pod A); fire an invoke at
-pod B; verify the reply returns to **B**. That demonstrates client results routing the completion home
-without any backplane.
+---
 
-## Files
+## Notes
 
-| Path | Purpose |
-|------|---------|
-| `src/config.ts` | Env-sourced config (`apxBaseUrl`, `botKey`, directive). |
-| `src/negotiate.ts` | `POST /v3/websockets/connect` → `{ url, accessToken, expiresIn }`. |
-| `src/socketClient.ts` | Builds the hub connection; registers the **returning** `Activity` handler. |
-| `src/handler.ts` | Reads an invoke envelope and **returns** the `InvokeReplyFrame` (directive-driven). |
-| `src/invokeResponses.ts` | Bot Framework invoke-response bodies per invoke name (HTTP-parity shapes). |
-| `src/index.ts` | Single-instance guard + resilient negotiate/connect/re-negotiate loop. |
-| `start-local-redis.ps1` | Portable local Redis for the APX connection directory. |
-| `teamsapp*.yml`, `.vscode/`, `env/` | Teams Toolkit (M365 Agents Toolkit) F5 self-provision. |
-
-## Security
-
-- The Azure SignalR **connection string (AccessKey) is a secret** — it lives only in the APX process
-  env, never in this repo.
-- `.localConfigs`, `env/.env.local`, and `env/.env.local.user` hold provisioned secrets and are
-  **gitignored**. Only the `*.sample` / `.env.example` templates are tracked.
+- The `messagingEndpoint` in the Bot Framework registration is a placeholder — socket mode never uses
+  it. APX delivery uses the socket when the bot is socket-eligible and connected.
+- Routing your Teams session's bot traffic to APX **Canary** (flighting) is an environment concern.

@@ -1,11 +1,20 @@
 import { config } from "./config";
 import { buildInvokeResponse } from "./invokeResponses";
+import { sendActivityHttp } from "./sendActivity";
+import { invokeDemoCard } from "./cards";
+import { logEvent, logError, truncate } from "./log";
 
-// The reply frame the bot returns from its "Activity" handler. APX reconstructs an HttpResponseMessage
-// from { status, body } and feeds it to InvokeHelper.ProcessInvokeResponse unchanged, so this is the
-// same shape an HTTP bot would return. envelopeId / botKey / ts / recvAt are optional echoes used for
-// logging, latency telemetry, and a defensive anti-spoof check on APX (botKey must match the target).
-export interface InvokeReplyFrame {
+// Must match APX Library/Services/SocketProtocol.CurrentVersion. APX's SocketInvokeDispatcher rejects
+// any reply whose protocolVersion != this as a ProtocolMismatch (-> HTTP fallback), so every frame the
+// bot returns MUST carry it.
+const PROTOCOL_VERSION = 1;
+
+// The reply frame the bot RETURNS from its "Activity" handler (SignalR client results). Mirrors APX's
+// InvokeReplyFrame: for an invoke it carries { status, body }; for a one-way activity it is a minimal
+// delivery ack (status 200, no body). protocolVersion/envelopeId/botKey are validated by APX;
+// ts/recvAt are echoed for latency telemetry.
+export interface ReplyFrame {
+  protocolVersion: number;
   envelopeId?: string;
   status: number;
   body?: unknown;
@@ -14,12 +23,10 @@ export interface InvokeReplyFrame {
   recvAt?: number;
 }
 
-// The logging/anti-spoof echo fields the bot stamps on every reply (everything but the response itself).
-type ReplyEcho = Pick<InvokeReplyFrame, "envelopeId" | "botKey" | "recvAt">;
+type ReplyBase = Pick<ReplyFrame, "protocolVersion" | "envelopeId" | "botKey" | "recvAt">;
 
-// APX serializes the envelope with the Newtonsoft hub protocol (camelCase), but we still read fields
-// case-insensitively via g() to stay robust to any protocol/casing change. Invoke *value* contents
-// (directive, delayMs) are passed through verbatim, so they keep whatever casing the caller set.
+// APX serializes the envelope with the Newtonsoft hub protocol (camelCase); read case-insensitively to
+// stay robust to any casing change.
 function g(obj: any, name: string): any {
   if (obj == null) return undefined;
   if (obj[name] !== undefined) return obj[name];
@@ -27,70 +34,146 @@ function g(obj: any, name: string): any {
   return obj[cap];
 }
 
-// Handles one inbound invoke envelope and RETURNS the reply frame (client results):
-//   { type, envelopeId, cv, deadlineMs, payload: <BotActivity> }
-// Behavior is directive-driven via payload.value.directive so a single bot drives every scenario:
-//   ok    -> return 200 + the real Bot Framework invoke-response body  (happy path)
-//   error -> return 500 + error body                                   (bot handler failure)
-//   delay -> sleep payload.value.delayMs (default 27000) then return   (force APX deadline -> timeout)
-//   drop  -> never return                                              (force APX timeout -> HTTP fallback)
-export async function handleActivity(env: any): Promise<InvokeReplyFrame | undefined> {
-  // Stamp receipt time immediately so botProcessingMs (= bot-sent ts − recvAt) reflects real handling
-  // time, not ~0. Both timestamps share the single bot clock, so the metric is skew-free.
+// Handles one inbound envelope on the "Activity" client method and RETURNS the reply frame (client
+// results). APX sends two envelope kinds (SocketActivityEnvelope.Type / AckRequired):
+//   * invoke   (type="invoke")    -> return the full Bot Framework invoke response over the socket.
+//   * activity (ackRequired=true) -> return a minimal delivery ack (200); any content REPLY the bot
+//                                    sends goes over the HTTP conversation API (sendActivity.ts), since
+//                                    the socket-mode design keeps outbound activity sends on HTTP.
+// Directive-driven via payload.value.directive so one bot drives every scenario (ok|error|delay|drop).
+export async function handleActivity(env: any): Promise<ReplyFrame | undefined> {
   const recvAt = Date.now();
-  const type = g(env, "type");
+  const type = String(g(env, "type") ?? "").toLowerCase();
+  const ackRequired = Boolean(g(env, "ackRequired"));
   const payload = g(env, "payload") || {};
   const envelopeId = g(env, "envelopeId");
   const cv = g(env, "cv");
   const name = g(payload, "name");
   const value = g(payload, "value") || {};
   const directive = String(value.directive ?? value.Directive ?? config.defaultDirective).toLowerCase();
+  const base: ReplyBase = { protocolVersion: PROTOCOL_VERSION, envelopeId, botKey: config.botKey, recvAt };
 
-  console.log(`\n[recv] <-- APX  envelopeId=${envelopeId} type=${type} cv=${cv} name=${name} directive=${directive}`);
-  console.log(`[recv]   activity payload=${truncate(JSON.stringify(payload), 1500)}`);
+  const isInvoke = type === "invoke" && !ackRequired;
+  logEvent(
+    "recv <<",
+    {
+      dir: "APX->bot",
+      envelopeId,
+      kind: isInvoke ? "invoke" : "activity",
+      type,
+      ackRequired,
+      name,
+      directive,
+      payload: truncate(JSON.stringify(payload), 1500),
+    },
+    cv
+  );
 
-  // Real Teams invoke handling — the reply body is the same shape the HTTP bot would return for this
-  // invoke name. The transport directive only governs timing / error / drop.
+  if (!isInvoke) {
+    return handleOneWayActivity(base, payload, directive, envelopeId, cv);
+  }
+
+  // ---- invoke: respond over the socket (client result) ----
   const reply = buildInvokeResponse(name, value);
-  const base: ReplyEcho = { envelopeId, botKey: config.botKey, recvAt };
-
   switch (directive) {
     case "drop":
-      console.log(`[invoke] DROP (never returning) name=${name} envelopeId=${envelopeId} -> APX awaits to its deadline then times out -> HTTP fallback`);
-      // Never resolve: keep the client-results invocation pending so APX hits its invoke deadline.
-      return new Promise<InvokeReplyFrame>(() => { /* intentionally never resolves */ });
+      logError("reply >>", { dir: "bot->APX", envelopeId, name, action: "DROP (never returning)", note: "APX deadline -> HTTP fallback" }, cv);
+      return new Promise<ReplyFrame>(() => { /* intentionally never resolves */ });
 
     case "delay": {
       const ms = Number(value.delayMs ?? value.DelayMs ?? 27000);
-      console.log(`[invoke] DELAY ${ms}ms name=${name} envelopeId=${envelopeId} (tests the APX invoke deadline)`);
+      logEvent("reply >>", { dir: "bot->APX", envelopeId, name, action: `DELAY ${ms}ms`, note: "tests the APX invoke deadline" }, cv);
       await sleep(ms);
-      return reply200(base, reply);
+      return reply200(base, reply, cv);
     }
 
     case "error":
-      console.log(`[invoke] ERROR directive name=${name} envelopeId=${envelopeId} -> returning status=500`);
+      logError("reply >>", { dir: "bot->APX", envelopeId, name, status: 500, note: "directive=error" }, cv);
       return { ...base, status: 500, body: { error: "bot handler error (test directive=error)" }, ts: Date.now() };
 
     case "ok":
     default:
-      return reply200(base, reply);
+      return reply200(base, reply, cv);
   }
 }
 
-function reply200(base: ReplyEcho, reply: { status: number; body?: unknown }): InvokeReplyFrame {
-  const frame: InvokeReplyFrame = { ...base, status: reply.status, body: reply.body, ts: Date.now() };
-  console.log(
-    `[reply] --> APX (client result) envelopeId=${base.envelopeId} status=${frame.status} ` +
-      `body=${truncate(JSON.stringify(frame.body), 1200)}`
+// One-way (non-invoke) activity: the socket-mode equivalent of onMessageActivity. The bot acks delivery
+// over the socket (200), and for a message it also sends a content reply over the HTTP conversation API
+// — the send-activity path the socket-mode design keeps on HTTP. Directives: ok -> ack; drop/error ->
+// no ack (APX awaits its deadline -> HTTP fallback); delay -> ack after a short delay.
+async function handleOneWayActivity(
+  base: ReplyBase,
+  payload: any,
+  directive: string,
+  envelopeId: string | undefined,
+  cv: string | undefined
+): Promise<ReplyFrame> {
+  const type = String(g(payload, "type") ?? "").toLowerCase();
+
+  if (directive === "drop" || directive === "error") {
+    logError("ack >>", { dir: "bot->APX", envelopeId, type, action: `${directive} -> not acking`, note: "APX awaits deadline -> HTTP fallback" }, cv);
+    return new Promise<ReplyFrame>(() => { /* intentionally never resolves */ });
+  }
+
+  if (directive === "delay") {
+    await sleep(2000);
+  }
+
+  // Outbound content reply goes over HTTP (never the socket), per the socket-mode design.
+  try {
+    await maybeSendHttpReply(payload, cv);
+  } catch (e) {
+    logError("http-send <<", { dir: "APX->bot", result: "FAIL", note: "send-activity reply failed", error: (e as Error).message }, cv);
+  }
+
+  logEvent("ack >>", { dir: "bot->APX", envelopeId, type, status: 200, note: "one-way delivery confirmed" }, cv);
+  return { ...base, status: 200, ts: Date.now() };
+}
+
+// Sends a content reply to a received message over the HTTP conversation API
+// (POST {serviceUrl}/v3/conversations/{id}/activities) — never over the socket.
+async function maybeSendHttpReply(payload: any, cv: string | undefined): Promise<void> {
+  const type = String(g(payload, "type") ?? "").toLowerCase();
+  if (type !== "message") {
+    return; // only message activities get a content reply
+  }
+
+  const serviceUrl = g(payload, "serviceUrl");
+  const conversation = g(payload, "conversation") || {};
+  const conversationId = g(conversation, "id");
+  if (!serviceUrl || !conversationId) {
+    logError("http-send >>", { dir: "bot->APX", result: "SKIPPED", note: "activity missing serviceUrl/conversation.id" }, cv);
+    return;
+  }
+
+  // Reply to ANY user message (not a specific keyword): echo the exact text as "You said: <text>" and
+  // attach the invoke-demo card to the SAME activity. The card's Action.Execute/Action.Submit buttons
+  // each fire an invoke back to the bot OVER THE SOCKET, bootstrapping the full round-trip demo.
+  const userText = g(payload, "text");
+  const said = userText != null ? String(userText) : "";
+  const reply = {
+    type: "message",
+    text: said ? `You said: ${said}` : "Got your message over the socket.",
+    from: g(payload, "recipient"),
+    recipient: g(payload, "from"),
+    conversation,
+    replyToId: g(payload, "id"),
+    attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: invokeDemoCard() }],
+  };
+
+  logEvent("reply-card >>", { dir: "bot->APX", transport: "HTTP", note: "echo + invoke-demo card reply", conv: conversationId, userText: said.replace(/\s+/g, " ").slice(0, 200) }, cv);
+  const result = await sendActivityHttp(serviceUrl, conversationId, reply);
+  logEvent("reply-card <<", { dir: "APX->bot", transport: "HTTP", result: "OK", status: result.status }, result.cv);
+}
+
+function reply200(base: ReplyBase, reply: { status: number; body?: unknown }, cv: string | undefined): ReplyFrame {
+  const frame: ReplyFrame = { ...base, status: reply.status, body: reply.body, ts: Date.now() };
+  logEvent(
+    "reply >>",
+    { dir: "bot->APX", transport: "socket (client result)", envelopeId: base.envelopeId, status: frame.status, body: truncate(JSON.stringify(frame.body), 1200) },
+    cv
   );
   return frame;
-}
-
-function truncate(s: string | undefined, max = 800): string {
-  if (s == null) {
-    return "(none)";
-  }
-  return s.length <= max ? s : s.slice(0, max) + `...(+${s.length - max} chars)`;
 }
 
 function sleep(ms: number): Promise<void> {

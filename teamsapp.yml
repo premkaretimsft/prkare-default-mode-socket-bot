@@ -1,20 +1,21 @@
-# yaml-language-server: $schema=https://aka.ms/teams-toolkit/1.0.0/yaml.schema.json
-# Teams Toolkit project config for the Default-mode socket test bot.
-# This bot is socket-ONLY: it connects out to Azure SignalR and exposes no endpoint, so there is no
-# Teams app, no manifest, no Bot Framework messaging endpoint and no tunnel. Provisioning only creates
-# a Microsoft Entra app whose client id is the socket "botKey".
-version: 1.0.0
+# yaml-language-server: $schema=https://aka.ms/teams-toolkit/v1.11/yaml.schema.json
+# Default lifecycle (M365 Agents Toolkit). This bot is socket-ONLY: it receives activities from APX
+# over the Azure SignalR Default-mode socket, so there is NO dev tunnel and NO public messaging
+# endpoint. For local F5 debugging the toolkit uses teamsapp.local.yml.
+version: v1.11
 
-environmentFolderPath: ./env
-
-# Triggered by 'teamsapp provision'. Idempotent: aadApp/create reuses the app when BOT_ID is already
-# populated in the env file, and creates a new one when it is empty.
 provision:
+  - uses: teamsApp/create
+    with:
+      name: Prkare Socket Test-${{TEAMSFX_ENV}}
+    writeToEnvironmentFile:
+      teamsAppId: TEAMS_APP_ID
+
   - uses: aadApp/create
     with:
       name: prkare-default-mode-socket-bot-${{TEAMSFX_ENV}}
       generateClientSecret: true
-      generateServicePrincipal: false
+      generateServicePrincipal: true
       signInAudience: AzureADMyOrg
     writeToEnvironmentFile:
       clientId: BOT_ID
@@ -22,7 +23,35 @@ provision:
       objectId: AAD_APP_OBJECT_ID
       tenantId: AAD_APP_TENANT_ID
 
-# Triggered by 'teamsapp deploy'. Writes the runtime env the bot process reads.
+  # No public endpoint: placeholder messagingEndpoint, never called while APX delivers over the socket.
+  - uses: botFramework/create
+    with:
+      botId: ${{BOT_ID}}
+      name: Prkare Socket Test
+      messagingEndpoint: https://example.com/api/messages
+      description: "Prkare Socket Test — Default-mode socket bot; receives over Azure
+        SignalR, no public endpoint."
+      channels:
+        - name: msteams
+
+  - uses: teamsApp/validateManifest
+    with:
+      manifestPath: ./appPackage/manifest.json
+
+  - uses: teamsApp/zipAppPackage
+    with:
+      manifestPath: ./appPackage/manifest.json
+      outputZipPath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+      outputFolder: ./appPackage/build
+
+  - uses: teamsApp/validateAppPackage
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+
+  - uses: teamsApp/update
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+
 deploy:
   - uses: file/createOrUpdateEnvironmentFile
     with:
@@ -34,5 +63,4 @@ deploy:
         APX_BASE_URL: ${{APX_BASE_URL}}
         DEFAULT_DIRECTIVE: ${{DEFAULT_DIRECTIVE}}
         NODE_TLS_REJECT_UNAUTHORIZED: ${{NODE_TLS_REJECT_UNAUTHORIZED}}
-
-projectId: 7d4f1e08-3a26-4b91-bc52-9e10f3a7c4d2
+projectId: 469133cd-3e22-4e84-8968-2d622a28ddcb

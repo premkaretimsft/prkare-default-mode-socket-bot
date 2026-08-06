@@ -29,13 +29,13 @@ provision:
       objectId: AAD_APP_OBJECT_ID
       tenantId: AAD_APP_TENANT_ID
 
-  # Socket mode: no messaging endpoint. A set endpoint becomes the bot's APS CallbackUrl and forces
-  # HTTP delivery, bypassing the socket.
+  # Socket mode: messagingEndpoint is a required placeholder (botFramework/create rejects empty).
+  # It becomes the bot's APS CallbackUrl, but net8 socket-first delivery bypasses it for connected bots.
   - uses: botFramework/create
     with:
       botId: ${{BOT_ID}}
       name: Prkare Socket Test
-      messagingEndpoint: ""
+      messagingEndpoint: "https://example.com/api/messages"
       description: "Prkare Socket Test — Default-mode socket bot; receives over Azure SignalR, no public endpoint."
       channels:
         - name: msteams

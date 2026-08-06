@@ -23,12 +23,12 @@ provision:
       objectId: AAD_APP_OBJECT_ID
       tenantId: AAD_APP_TENANT_ID
 
-  # No public endpoint: placeholder messagingEndpoint, never called while APX delivers over the socket.
+  # Socket mode: no messaging endpoint (a set endpoint becomes the APS CallbackUrl and forces HTTP delivery).
   - uses: botFramework/create
     with:
       botId: ${{BOT_ID}}
       name: Prkare Socket Test
-      messagingEndpoint: https://example.com/api/messages
+      messagingEndpoint: ""
       description: "Prkare Socket Test — Default-mode socket bot; receives over Azure
         SignalR, no public endpoint."
       channels:

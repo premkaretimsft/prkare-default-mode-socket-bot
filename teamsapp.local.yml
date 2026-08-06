@@ -29,14 +29,13 @@ provision:
       objectId: AAD_APP_OBJECT_ID
       tenantId: AAD_APP_TENANT_ID
 
-  # Register the bot with Bot Framework so the manifest's botId is a valid Teams bot. Socket mode has
-  # no public endpoint; the placeholder messagingEndpoint is never called while APX delivers over the
-  # socket. (APX Canary socket-eligibility / APS onboarding is a separate, APX-side step.)
+  # Socket mode: no messaging endpoint. A set endpoint becomes the bot's APS CallbackUrl and forces
+  # HTTP delivery, bypassing the socket.
   - uses: botFramework/create
     with:
       botId: ${{BOT_ID}}
       name: Prkare Socket Test
-      messagingEndpoint: https://example.com/api/messages
+      messagingEndpoint: ""
       description: "Prkare Socket Test — Default-mode socket bot; receives over Azure SignalR, no public endpoint."
       channels:
         - name: msteams

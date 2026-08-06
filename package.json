@@ -7,6 +7,7 @@
   "main": "./lib/index.js",
   "scripts": {
     "build": "tsc --build",
+    "init:env": "node scripts/init-env.js",
     "start": "node -r dotenv/config ./lib/index.js",
     "dev": "nodemon --watch src --ext ts --exec \"node --inspect=9239 -r dotenv/config -r ts-node/register ./src/index.ts\"",
     "dev:teamsfx": "env-cmd --silent -f .localConfigs npm run dev"

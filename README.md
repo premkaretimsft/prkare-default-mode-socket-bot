@@ -8,6 +8,8 @@ the socket-mode design intends.
 
 Set up like a normal M365 Agents Toolkit bot: **F5 does all the registration** (Teams app + Entra app
 + Bot Framework) and opens Teams in the browser to install the app — minus the tunnel/endpoint steps.
+The gitignored env files are **auto-seeded from their `.sample` templates on first run**, so there is
+no manual copy step.
 
 ---
 
@@ -73,22 +75,28 @@ copy them straight into the APX log search.
 
 ---
 
-## Run it (F5)
+## Run it (two steps)
 
-1. Open the folder in VS Code.
-2. Press **F5** and pick **Debug in Teams (Edge)** or **(Chrome)**. The `Start socket bot locally`
-   task chain runs:
-   - **Validate prerequisites** (Node, M365 sign-in, port 9239),
+1. **Sign in** to the **Microsoft 365 Agents Toolkit** extension with the test account you want the bot
+   to run as (sideloading enabled).
+2. Press **F5** and pick **Debug in Teams (Edge)** or **(Chrome)**.
+
+That's it. The `Start socket bot locally` task chain does the rest:
+   - **Free debug port** (9239) and **Validate prerequisites** (Node, M365 sign-in),
    - **npm install**,
+   - **Initialize env files (if missing)** — seeds `env/.env.local` and `env/.env.local.user` from
+     their `.sample` templates (with defaults like `TEAMSFX_ENV=local` prepopulated). **Existing files
+     are never overwritten.**
    - **Provision** (`teamsapp provision --env local`) — creates the Teams app, the Entra app
      (client id = bot id / socket botKey, + client secret), and the Bot Framework registration
      (**placeholder** messaging endpoint — never called in socket mode),
    - **Deploy** — writes runtime env to `.localConfigs`,
    - **Start application** (`npm run dev:teamsfx`) — negotiates with APX and opens the socket.
-3. The browser opens Teams and installs the app; start a **1:1 chat** with **Prkare Socket Test**.
+
+The browser opens Teams and installs the app; start a **1:1 chat** with **Prkare Socket Test**.
 
 There is **no dev tunnel and no messaging endpoint** — the bot is reachable only via its outbound
-socket to Azure SignalR.
+socket to Azure SignalR. To re-seed env files manually (e.g. outside VS Code), run `npm run init:env`.
 
 ### Manual run (no Teams UI)
 

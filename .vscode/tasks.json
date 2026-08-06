@@ -7,6 +7,7 @@
         "Free debug port",
         "Validate prerequisites",
         "npm install (socket bot)",
+        "Initialize env files (if missing)",
         "Provision",
         "Deploy",
         "Start application"
@@ -17,6 +18,19 @@
       "label": "Free debug port",
       "type": "shell",
       "command": "node scripts/free-port.js 9239",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Initialize env files (if missing)",
+      "type": "shell",
+      "command": "node scripts/init-env.js",
       "options": {
         "cwd": "${workspaceFolder}"
       },

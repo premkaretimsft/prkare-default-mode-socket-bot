@@ -93,7 +93,9 @@ That's it. The `Start socket bot locally` task chain does the rest:
    - **Deploy** — writes runtime env to `.localConfigs`,
    - **Start application** (`npm run dev:teamsfx`) — negotiates with APX and opens the socket.
 
-The browser opens Teams and installs the app; start a **1:1 chat** with **Prkare Socket Test**.
+Teams opens in a **single tab** of your normal (signed-in) Edge/Chrome — the bot is debugged via a Node
+attach, not a throwaway debug browser, so there is no second sign-in/redirect tab. Install the app and
+start a **1:1 chat** with **Prkare Socket Test**.
 
 There is **no dev tunnel and no messaging endpoint** — the bot is reachable only via its outbound
 socket to Azure SignalR. To re-seed env files manually (e.g. outside VS Code), run `npm run init:env`.

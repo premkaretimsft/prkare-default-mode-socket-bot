@@ -2,34 +2,6 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Launch App in Teams (Edge)",
-      "type": "msedge",
-      "request": "launch",
-      "url": "https://teams.microsoft.com/l/app/${{local:TEAMS_APP_ID}}?installAppPackage=true&webjoin=true&${account-hint}",
-      "cascadeTerminateToConfigurations": [
-        "Attach to socket bot"
-      ],
-      "presentation": {
-        "group": "all",
-        "hidden": true
-      },
-      "internalConsoleOptions": "neverOpen"
-    },
-    {
-      "name": "Launch App in Teams (Chrome)",
-      "type": "chrome",
-      "request": "launch",
-      "url": "https://teams.microsoft.com/l/app/${{local:TEAMS_APP_ID}}?installAppPackage=true&webjoin=true&${account-hint}",
-      "cascadeTerminateToConfigurations": [
-        "Attach to socket bot"
-      ],
-      "presentation": {
-        "group": "all",
-        "hidden": true
-      },
-      "internalConsoleOptions": "neverOpen"
-    },
-    {
       "name": "Attach to socket bot",
       "type": "node",
       "request": "attach",
@@ -46,10 +18,9 @@
     {
       "name": "Debug in Teams (Edge)",
       "configurations": [
-        "Launch App in Teams (Edge)",
         "Attach to socket bot"
       ],
-      "preLaunchTask": "Start socket bot locally",
+      "preLaunchTask": "Debug prep (Edge)",
       "presentation": {
         "group": "group 1: Teams",
         "order": 1
@@ -59,10 +30,9 @@
     {
       "name": "Debug in Teams (Chrome)",
       "configurations": [
-        "Launch App in Teams (Chrome)",
         "Attach to socket bot"
       ],
-      "preLaunchTask": "Start socket bot locally",
+      "preLaunchTask": "Debug prep (Chrome)",
       "presentation": {
         "group": "group 1: Teams",
         "order": 2

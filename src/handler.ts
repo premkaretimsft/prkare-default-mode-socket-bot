@@ -2,6 +2,7 @@ import { config } from "./config";
 import { buildInvokeResponse } from "./invokeResponses";
 import { sendActivityHttp } from "./sendActivity";
 import { invokeDemoCard } from "./cards";
+import { cleanUserText, getConversationScope, isBotMentioned, isGroupScope } from "./mentions";
 import { logEvent, logError, truncate } from "./log";
 
 // Must match APX Library/Services/SocketProtocol.CurrentVersion. APX's SocketInvokeDispatcher rejects
@@ -54,6 +55,7 @@ export async function handleActivity(env: any): Promise<ReplyFrame | undefined> 
   const base: ReplyBase = { protocolVersion: PROTOCOL_VERSION, envelopeId, botKey: config.botKey, recvAt };
 
   const isInvoke = type === "invoke" && !ackRequired;
+  const scope = getConversationScope(payload);
   logEvent(
     "recv <<",
     {
@@ -64,6 +66,8 @@ export async function handleActivity(env: any): Promise<ReplyFrame | undefined> 
       ackRequired,
       name,
       directive,
+      scope,
+      botMentioned: isBotMentioned(payload),
       payload: truncate(JSON.stringify(payload), 1500),
     },
     cv
@@ -138,6 +142,17 @@ async function maybeSendHttpReply(payload: any, cv: string | undefined): Promise
     return; // only message activities get a content reply
   }
 
+  const scope = getConversationScope(payload);
+  const mentioned = isBotMentioned(payload);
+
+  // In a channel or group chat Teams only routes a message to the bot when it is @-mentioned, so a
+  // non-mention arriving here means the message was broadcast to the bot some other way (e.g. RSC).
+  // Replying to those would make the bot answer unrelated chatter, so only mentions get a reply.
+  if (isGroupScope(scope) && !mentioned) {
+    logEvent("reply-card >>", { dir: "bot->APX", result: "SKIPPED", scope, note: "group/channel message without a bot @mention" }, cv);
+    return;
+  }
+
   const serviceUrl = g(payload, "serviceUrl");
   const conversation = g(payload, "conversation") || {};
   const conversationId = g(conversation, "id");
@@ -149,19 +164,22 @@ async function maybeSendHttpReply(payload: any, cv: string | undefined): Promise
   // Reply to ANY user message (not a specific keyword): echo the exact text as "You said: <text>" and
   // attach the invoke-demo card to the SAME activity. The card's Action.Execute/Action.Submit buttons
   // each fire an invoke back to the bot OVER THE SOCKET, bootstrapping the full round-trip demo.
-  const userText = g(payload, "text");
-  const said = userText != null ? String(userText) : "";
+  // In group scopes the text still carries the bot's own "<at>..</at>" tag, so strip it first — the echo
+  // should show what the user typed, not the mention markup.
+  const said = cleanUserText(payload);
   const reply = {
     type: "message",
-    text: said ? `You said: ${said}` : "Got your message over the socket.",
+    text: said ? `You said: ${said}` : `Got your ${scope} message over the socket.`,
     from: g(payload, "recipient"),
     recipient: g(payload, "from"),
     conversation,
+    // In a channel the conversation id carries ";messageid=", so replying to it keeps the bot's answer in
+    // the same thread rather than starting a new top-level post.
     replyToId: g(payload, "id"),
     attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: invokeDemoCard() }],
   };
 
-  logEvent("reply-card >>", { dir: "bot->APX", transport: "HTTP", note: "echo + invoke-demo card reply", conv: conversationId, userText: said.replace(/\s+/g, " ").slice(0, 200) }, cv);
+  logEvent("reply-card >>", { dir: "bot->APX", transport: "HTTP", note: "echo + invoke-demo card reply", scope, botMentioned: mentioned, conv: conversationId, userText: said.slice(0, 200) }, cv);
   const result = await sendActivityHttp(serviceUrl, conversationId, reply);
   logEvent("reply-card <<", { dir: "APX->bot", transport: "HTTP", result: "OK", status: result.status }, result.cv);
 }

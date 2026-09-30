@@ -27,10 +27,27 @@
         {
             "botId": "${{BOT_ID}}",
             "scopes": [
-                "personal"
+                "personal",
+                "team",
+                "groupchat"
             ],
             "isNotificationOnly": false,
-            "supportsFiles": false
+            "supportsFiles": false,
+            "commandLists": [
+                {
+                    "scopes": [
+                        "personal",
+                        "team",
+                        "groupchat"
+                    ],
+                    "commands": [
+                        {
+                            "title": "hi",
+                            "description": "Echo the message over the socket and post the invoke-demo card"
+                        }
+                    ]
+                }
+            ]
         }
     ],
     "configurableTabs": [],

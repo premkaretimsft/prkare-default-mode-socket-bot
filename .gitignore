@@ -2,16 +2,24 @@
 node_modules/
 lib/
 dist/
-*.log
 *.tsbuildinfo
 
-# Secrets & local env -- NEVER commit (templates .env.example / env/.env.local.sample ARE tracked)
+# Run logs (logs/socket-test-*.log) and anything else dropped in logs/, e.g. exported service logs
+logs/
+*.log
+
+# Secrets & local env -- NEVER commit (templates .env.example and env/*.sample ARE tracked)
 .env
 .env.local
 .env.*.local
 .localConfigs
-env/.env.local
-env/.env.*.user
+.localConfigs.*
+env/.env.*
+!env/.env.*.sample
+
+# Teams Toolkit generated output
+appPackage/build/
+devTools/
 
 # Local Redis lockfile / pid (if ever placed in-repo)
 *.pid
@@ -19,5 +27,3 @@ env/.env.*.user
 # OS / editor cruft
 .DS_Store
 Thumbs.db
-
-appPackage/build/

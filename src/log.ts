@@ -4,9 +4,69 @@
 // vector: for an inbound socket envelope it's echoed on the envelope (env.cv); for an outbound HTTP
 // call it's on the APX *response* headers (APX mints it per request). Both success and failure are
 // logged with the same shape.
+import * as fs from "fs";
+import * as path from "path";
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+let logFilePath: string | undefined;
+
+// Tees everything written to the console (the structured lines below, the SignalR client's own log and
+// any other output) into logs/socket-test-<UTC start time>.log, so a whole run can be reviewed later.
+// Tokens are redacted in the file.
+export function initFileLog(): string {
+  if (logFilePath) {
+    return logFilePath;
+  }
+  const dir = path.resolve(__dirname, "..", "logs");
+  fs.mkdirSync(dir, { recursive: true });
+  logFilePath = path.join(dir, `socket-test-${nowIso().replace(/[:.]/g, "-")}.log`);
+  for (const method of ["log", "info", "warn", "error"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...args: unknown[]): void => {
+      original(...args);
+      appendToFile(args);
+    };
+  }
+  return logFilePath;
+}
+
+function appendToFile(args: unknown[]): void {
+  if (!logFilePath) {
+    return;
+  }
+  let line = args.map(stringify).join(" ");
+  if (!/^\[\d{4}-\d{2}-\d{2}T/.test(line)) {
+    line = `[${nowIso()}] ${line}`;
+  }
+  try {
+    fs.appendFileSync(logFilePath, redactSecrets(line) + "\n");
+  } catch {
+    /* never let file logging break the bot */
+  }
+}
+
+function stringify(a: unknown): string {
+  if (typeof a === "string") {
+    return a;
+  }
+  if (a instanceof Error) {
+    return a.stack ?? a.message;
+  }
+  try {
+    return JSON.stringify(a);
+  } catch {
+    return String(a);
+  }
+}
+
+function redactSecrets(s: string): string {
+  return s
+    .replace(/access_token=[^&\s"]+/gi, "access_token=<redacted>")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>")
+    .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "<jwt redacted>");
 }
 
 // Render a flat field bag as `key=value` pairs, skipping undefined/null. Values are stringified and

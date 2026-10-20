@@ -48,9 +48,6 @@ export const config = {
     `https://login.microsoftonline.com/${botTenantId || "botframework.com"}/oauth2/v2.0/token`,
   oauthScope: process.env.OAUTH_SCOPE || "https://api.botframework.com/.default",
 
-  // Re-negotiate at this fraction of the token lifetime (make-before-break-lite).
-  renegotiateFraction: Number(process.env.RENEGOTIATE_FRACTION || 0.8),
-
   // Behavior when an invoke carries no explicit directive in payload.value.directive.
   // One of: ok | error | delay | drop.
   defaultDirective: (process.env.DEFAULT_DIRECTIVE || "ok").toLowerCase(),

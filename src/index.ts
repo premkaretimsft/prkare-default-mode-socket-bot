@@ -4,9 +4,10 @@ import * as path from "path";
 import { execSync } from "child_process";
 import * as inspector from "inspector";
 import { config } from "./config";
-import { buildConnection } from "./socketClient";
-import { handleActivity } from "./handler";
-import type { HubConnection } from "@microsoft/signalr";
+import { initFileLog, logEvent } from "./log";
+import { SELF_TEST_ENABLED, TARGET_CONNECTIONS, logStatus, openInitialSockets, startStatusTimer } from "./socketPool";
+import { runSelfTest } from "./selfTest";
+import { startKeepAlive } from "./keepAlive";
 
 // Single-instance guard. An orphaned bot process survives APX restarts (resilient reconnect) and
 // would keep an extra connection registered in APX's directory — so an invoke could target the stale
@@ -14,12 +15,6 @@ import type { HubConnection } from "@microsoft/signalr";
 // collides while the orphan keeps its socket. A PID lockfile fixes it: on startup SIGTERM any prior
 // instance, then claim the lock.
 const LOCK_FILE = path.join(os.tmpdir(), "prkare-default-mode-socket-bot.lock");
-
-// Max consecutive failed connect attempts before giving up (keeps the existing 1s..30s backoff timing).
-// Set generously (20) because Canary load-balances the connect across net472 (503 stub) and net8
-// (real direct-mint) BFE instances during the .NET Core rollout, so several retries can be needed
-// before a request lands on a net8 instance.
-const MAX_CONNECT_ATTEMPTS = 20;
 
 async function enforceSingleInstance(): Promise<void> {
   try {
@@ -129,73 +124,10 @@ function freeInspectorPortIfBusy(): void {
   }
 }
 
-// Keeps one socket connection alive indefinitely and resilient to APX being unavailable.
-//
-// The data socket is to Azure SignalR, negotiated THROUGH APX (POST /v3/websockets/connect). A brief
-// APX restart therefore does NOT drop the socket — APX is only needed to (re)negotiate: on cold
-// start, at token expiry, or after the SignalR socket closes for good. This loop:
-//   * retries the APX negotiate with exponential backoff (1s..30s) until APX is reachable,
-//   * re-negotiates immediately when the live socket closes (auto-reconnect exhausted / token
-//     rejected) instead of waiting out the expiry timer,
-//   * relies on SignalR's withAutomaticReconnect for fast recovery of transient drops.
-async function manageConnection(label: string): Promise<void> {
-  let backoffMs = 0;
-  let failedAttempts = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let conn: HubConnection | undefined;
-    try {
-      const { connection, expiresIn } = await buildConnection(label, (env) => handleActivity(env));
-      conn = connection;
-      backoffMs = 0; // negotiate + connect succeeded — reset backoff
-      failedAttempts = 0; // and reset the give-up counter for this fresh session
-      console.log(`[${label}] ready (token ~${expiresIn}s). Awaiting invokes over client results.`);
-
-      const renegotiateInMs = Math.max(60, expiresIn * config.renegotiateFraction) * 1000;
-      const reason = await waitForRenegotiate(connection, renegotiateInMs);
-      console.log(`[${label}] re-negotiating via APX (${reason})`);
-    } catch (e) {
-      failedAttempts += 1;
-      if (failedAttempts >= MAX_CONNECT_ATTEMPTS) {
-        console.error(
-          `[${label}] connect via APX failed ${failedAttempts}/${MAX_CONNECT_ATTEMPTS} times; giving up: ${(e as Error).message}`
-        );
-        return;
-      }
-      // Negotiate (APX) or the initial connect failed — APX may be down/restarting. Back off and keep
-      // retrying (1s, 2s, 4s, ... capped at 30s), up to MAX_CONNECT_ATTEMPTS.
-      backoffMs = backoffMs === 0 ? 1000 : Math.min(backoffMs * 2, 30000);
-      console.error(
-        `[${label}] connect via APX failed (attempt ${failedAttempts}/${MAX_CONNECT_ATTEMPTS}), retrying in ${backoffMs}ms: ${(e as Error).message}`
-      );
-      await sleep(backoffMs);
-    } finally {
-      try {
-        await conn?.stop();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-}
-
-// Resolves when the token nears expiry OR the connection closes for good (whichever first), so an
-// exhausted auto-reconnect triggers a fresh APX negotiate right away.
-function waitForRenegotiate(conn: HubConnection, renegotiateInMs: number): Promise<string> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (reason: string): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(reason);
-    };
-    const timer = setTimeout(() => finish("token near expiry"), renegotiateInMs);
-    conn.onclose((err) => finish(err ? `socket closed: ${err.message}` : "socket closed"));
-  });
-}
-
 async function main(): Promise<void> {
+  const logFile = initFileLog();
+  console.log(`[log] writing this run to ${logFile}`);
+
   if (!config.botKey) {
     console.error(
       "Bot identity is required: set BOT_ID (filled by Teams Toolkit provision) or BOT_KEY in .env / " +
@@ -212,18 +144,34 @@ async function main(): Promise<void> {
       `defaultDirective=${config.defaultDirective}`
   );
 
-  await manageConnection("conn1");
+  logEvent("bot", {
+    phase: "start",
+    sockets: TARGET_CONNECTIONS,
+    selfTest: SELF_TEST_ENABLED ? "on (limit probe, refresh scenarios, same-token checks)" : "off (SOCKET_SELF_TEST=false)",
+  });
 
-  // manageConnection only returns after MAX_CONNECT_ATTEMPTS failures — stop instead of looping forever.
-  console.error(`[bot] stopped after ${MAX_CONNECT_ATTEMPTS} failed connection attempts. Exiting.`);
-  process.exit(1);
+  // Open the sockets one after the other, run the startup self-test once, then keep the sockets alive:
+  // refresh each one 60 s before its token expires (replaces header + drain) and reconnect after a drop.
+  if (!(await openInitialSockets())) {
+    console.error("[bot] could not open the sockets. Exiting.");
+    process.exit(1);
+  }
+  if (SELF_TEST_ENABLED) {
+    await runSelfTest();
+  }
+  startKeepAlive();
+  logEvent("bot", { phase: "ready", next: "use the bot from Teams; each delivery logs a [route <<] line with the socket it arrived on" });
+  startStatusTimer();
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-process.on("exit", releaseLock);
+process.on("exit", (code) => {
+  logStatus(`exit code=${code}`);
+  releaseLock();
+});
 process.on("SIGINT", () => {
   console.log("\nShutting down.");
   releaseLock();

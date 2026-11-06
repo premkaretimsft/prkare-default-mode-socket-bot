@@ -33,24 +33,15 @@ export class NegotiateError extends Error {
   }
 }
 
-// POST {apxBaseUrl}/v3/websockets/connect.
-// DEBUG local APX honors ?botKey=<MsaAppId> when the request is unauthenticated, which is all this
-// test bot needs. For an authenticated run, replace the query param with a Bearer Bot Framework JWT
-// and let APX derive the botKey from the validated token.
-export async function negotiate(label?: string, replacesConnectionId?: string): Promise<NegotiateResult> {
-  // Join onto the base path (preserve any cloud/region segment like /amer). A leading-slash URL
-  // path would replace the whole base path and drop /amer, so concatenate explicitly.
-  const base = config.apxBaseUrl.replace(/\/+$/, "");
+// POST {apxBaseUrl}/{region}/v3/websockets/connect.
+// Authenticated with a Bot Framework JWT when BOT_PASSWORD is set; APX derives the botKey from the validated
+// token. A DEBUG local APX honors ?botKey=<MsaAppId> when the request is unauthenticated.
+export async function negotiate(label: string | undefined, region: string, replacesConnectionId?: string): Promise<NegotiateResult> {
+  const base = `${config.apxBaseUrl.replace(/\/+$/, "")}/${region}`;
 
-  // Tenantized connect route: {cloud}/{tenantId}/v3/websockets/connect. The bot token only carries
-  // botId, not tenant — APX's OpenIdJwtAuthenticator never sets ctx.TenantId for a bot token, and a
-  // WebSocket connect has no conversation to resolve an end-user tenant from. So a tenant-scoped
-  // socket flag (DeliverEventViaSocketEnabled) can't match on the plain route and connect returns
-  // 503 reason=Disabled. Putting the tenant in the path lets BotFrontEnd's TenantIdInPathFilter call
-  // ctx.SetTenantId(tenantId) before the eligibility check, so tenant-scoped gating resolves.
-  // Requires the TenantIdInPathRoutesEnabled feature to be ON in the ring (else APX returns
-  // "API not enabled"). Only used for the authenticated Canary path; a local DEBUG ?botKey= run
-  // keeps the plain route.
+  // The plain route {region}/v3/websockets/connect is the default. TENANT_IN_PATH=true forces the tenantized
+  // route {region}/{tenantId}/v3/websockets/connect (needs TenantIdInPathRoutesEnabled in the ring); a local
+  // DEBUG ?botKey= run always keeps the plain route.
   const useTenantPath =
     config.tenantInPath && !!config.botPassword && !!config.botTenantId;
   const connectPath = useTenantPath
@@ -59,6 +50,7 @@ export async function negotiate(label?: string, replacesConnectionId?: string): 
   const url = new URL(connectPath);
   logEvent("negotiate >>", {
     conn: label,
+    region,
     dir: "bot->APX",
     method: "POST",
     route: url.pathname,
@@ -99,7 +91,7 @@ export async function negotiate(label?: string, replacesConnectionId?: string): 
     // (WebSocketConnectController.NETFramework.cs) — the load balancer hit a non-net8 BFE instance.
     logError(
       "negotiate <<",
-      { conn: label, dir: "APX->bot", result: "FAIL", status: res.status, retryAfter: retryAfterHeader ?? undefined, elapsedMs, diag, body: body || "(empty)" },
+      { conn: label, region, dir: "APX->bot", result: "FAIL", status: res.status, retryAfter: retryAfterHeader ?? undefined, elapsedMs, diag, body: body || "(empty)" },
       cv
     );
     throw new NegotiateError(res.status, retryAfterSec, body, cv, `negotiate failed: HTTP ${res.status} ${diag} ${body}`);
@@ -121,6 +113,7 @@ export async function negotiate(label?: string, replacesConnectionId?: string): 
     "negotiate <<",
     {
       conn: label,
+      region,
       dir: "APX->bot",
       result: "OK",
       status: res.status,

@@ -15,9 +15,12 @@ no manual copy step.
 
 ## What it does
 
-1. `POST {APX_BASE_URL}/{region}/v3/websockets/connect` for each region (`amer`, `emea`, `apac`) on
-   `https://botapi.skype.com`, authenticated with a real **Bot Framework JWT** minted from the bot's
-   client secret -> `{ url, accessToken, expiresIn, protocolVersion }`.
+1. `POST https://{region}.botapi.skype.com/{region}/v3/websockets/connect` for each region (`amer`, `emea`,
+   `apac`), authenticated with a real **Bot Framework JWT** minted from the bot's client secret ->
+   `{ url, accessToken, expiresIn, protocolVersion }`. Each region's own host always reaches that region's front
+   end, so the socket lands on the SignalR resource that delivers the region's traffic; the global
+   `botapi.skype.com` would send every region to the front end nearest the bot. Only connect uses the per-region
+   host; replies go to the activity's `serviceUrl` as before.
 2. Opens a SignalR WebSocket to the negotiated **Azure SignalR** `url` and joins the bot's group.
 3. Receives APX->bot frames on the **`Activity`** client method (a `SocketActivityEnvelope`):
    - **invoke** (`type:"invoke"`) -> computes the Bot Framework invoke response and **returns** it as
@@ -94,7 +97,7 @@ macOS and Linux (gitignored; tokens redacted).
 - The bot's AppId **socket-eligible in APX** (socket mode turned on for the bot) and known to APX
   (APS) — the APX-side onboarding.
 - The APX **WebSocket connect** endpoint reachable in each region
-  (`https://botapi.skype.com/{amer|emea|apac}/v3/websockets/connect`).
+  (`https://{amer|emea|apac}.botapi.skype.com/{amer|emea|apac}/v3/websockets/connect`).
 
 ---
 
@@ -146,6 +149,7 @@ expires).
 |---|---|
 | `APX_BASE_URL` | APX connect host, without a region: `https://botapi.skype.com` (default). Local DEBUG APX: `https://localhost:444`. A trailing region (e.g. `/amer`) is ignored. |
 | `APX_REGIONS` | regions to connect in, one socket each (default `amer,emea,apac`). For a local DEBUG APX use `amer`. |
+| `APX_GEO_CONNECT_HOST` | `true` (default) = when `APX_BASE_URL` is `https://botapi.skype.com`, connect through each region's own host (`https://{region}.botapi.skype.com`). `false` = connect through `APX_BASE_URL` as is. Other hosts (Canary, Pilot1, a local APX) are always used as is. Only the connect call is affected. |
 | `BOT_ID` | the bot's MSA AppId = socket botKey. APX derives the key from the validated token. |
 | `BOT_PASSWORD` | the bot's client secret (provisioned as `SECRET_BOT_PASSWORD`). Required for the authenticated connect. |
 | `BOT_TENANT_ID` | the bot's home tenant (single-tenant Entra app) = the Bot Framework token issuer APX validates. Also the tenant put in the connect path when `TENANT_IN_PATH=true`. |

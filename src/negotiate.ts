@@ -33,7 +33,24 @@ export class NegotiateError extends Error {
   }
 }
 
-// POST {apxBaseUrl}/{region}/v3/websockets/connect.
+// The public APX host. Its per-region hosts ({region}.botapi.skype.com) always reach that region's front end,
+// wherever the bot runs, while botapi.skype.com itself goes to the front end nearest the bot.
+const PUBLIC_APX_HOST = "botapi.skype.com";
+const REGIONS_WITH_OWN_HOST = new Set(["amer", "emea", "apac", "eudb"]);
+
+// The URL the connect call goes to. On the public host, each region connects through its own host so its socket lands
+// on the SignalR resource that delivers that region's traffic. Any other host (Canary, Pilot1, a local APX) is used as
+// is. Only the connect call goes through here; the bot's other calls to APX (replies) use the activity's serviceUrl.
+export function connectUrlFor(connectPath: string, region: string): URL {
+  const url = new URL(connectPath);
+  const normalizedRegion = region.toLowerCase();
+  if (config.geoConnectHost && url.hostname.toLowerCase() === PUBLIC_APX_HOST && REGIONS_WITH_OWN_HOST.has(normalizedRegion)) {
+    url.hostname = `${normalizedRegion}.${PUBLIC_APX_HOST}`;
+  }
+  return url;
+}
+
+// POST {apxBaseUrl}/{region}/v3/websockets/connect, on {region}.botapi.skype.com for the public host (connectUrlFor).
 // Authenticated with a Bot Framework JWT when BOT_PASSWORD is set; APX derives the botKey from the validated
 // token. A DEBUG local APX honors ?botKey=<MsaAppId> when the request is unauthenticated.
 export async function negotiate(label: string | undefined, region: string, replacesConnectionId?: string): Promise<NegotiateResult> {
@@ -47,12 +64,13 @@ export async function negotiate(label: string | undefined, region: string, repla
   const connectPath = useTenantPath
     ? `${base}/${config.botTenantId}/v3/websockets/connect`
     : `${base}/v3/websockets/connect`;
-  const url = new URL(connectPath);
+  const url = connectUrlFor(connectPath, region);
   logEvent("negotiate >>", {
     conn: label,
     region,
     dir: "bot->APX",
     method: "POST",
+    host: url.host,
     route: url.pathname,
     tenantized: useTenantPath,
     tenant: useTenantPath ? config.botTenantId : undefined,

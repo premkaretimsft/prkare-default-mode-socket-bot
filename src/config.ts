@@ -55,6 +55,13 @@ export const config = {
   // route {region}/{tenantId}/v3/websockets/connect, which also requires TenantIdInPathRoutesEnabled in the ring.
   tenantInPath: (process.env.TENANT_IN_PATH || "false").toLowerCase() === "true",
 
+  // When APX_BASE_URL is the public https://botapi.skype.com, connect through each region's own host
+  // ({region}.botapi.skype.com). That host always reaches the region's front end, so the socket lands on the SignalR
+  // resource that delivers the region's traffic; botapi.skype.com itself goes to the front end nearest the bot, which
+  // hands out its own region's resource for every region. Only the connect call uses it. Set APX_GEO_CONNECT_HOST=false
+  // to connect through APX_BASE_URL as is.
+  geoConnectHost: (process.env.APX_GEO_CONNECT_HOST || "true").toLowerCase() !== "false",
+
   // Bot Framework connector token endpoint + scope. Defaults: the bot's home-tenant STS and the
   // standard connector audience (https://api.botframework.com) — exactly what APX's
   // ToChannelTokenValidationParameters accept for a bot. Override OAUTH_TOKEN_URL for a multi-tenant
